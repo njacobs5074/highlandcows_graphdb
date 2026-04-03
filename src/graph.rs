@@ -226,9 +226,9 @@ impl GraphDb {
 // Private methods
 impl GraphDb {
     fn db_exists(path: &Path) -> bool {
-        return path.join(NODES_DB_FILE).exists()
+        path.join(NODES_DB_FILE).exists()
             && path.join(LABEL_INDEX_DB_FILE).exists()
-            && path.join(EDGES_DB_FILE).exists();
+            && path.join(EDGES_DB_FILE).exists()
     }
 
     fn edges_insert(
@@ -274,7 +274,7 @@ impl GraphDb {
                     .range(&mut txn, start..=end)?
                     .filter_map(|r| r.ok())
                     .map(|(k, _)| k.1)
-                    .filter(|k| k != &key)
+                    .filter(|k| *k != key)
                     .collect();
                 txn.commit()?;
 

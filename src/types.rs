@@ -13,6 +13,8 @@ pub const LABEL_INDEX_DB_FILE: &str = "label_index.idb";
 pub const EDGES_DB: &str = "edges";
 pub const EDGES_DB_FILE: &str = "edges.idb";
 
+// Stub for a future JSON ingestion path — fields not yet consumed.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 pub struct NodeInput {
     key: String,
