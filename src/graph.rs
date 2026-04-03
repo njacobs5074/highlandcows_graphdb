@@ -65,7 +65,6 @@ impl GraphDb {
     /// Inserts a new node and materializes edges to all nodes that share at
     /// least one label with it.
     pub fn add_node(&mut self, key: String, record: NodeRecord) -> IsamResult<()> {
-        // Step 1: Store the record into the main node store
         let mut txn = self.nodes.begin_transaction()?;
         self.nodes.insert(&mut txn, key.clone(), &record)?;
         txn.commit()?;
