@@ -1,5 +1,7 @@
 # highlandcows_graphdb
 
+[![CI](https://github.com/njacobs5074/highlandcows_graphdb/actions/workflows/ci.yml/badge.svg)](https://github.com/njacobs5074/highlandcows_graphdb/actions/workflows/ci.yml)
+
 A graph database built on top of [`highlandcows-isam`](https://njacobs5074.github.io/highlandcows/highlandcows_isam/index.html) — an ISAM (Indexed Sequential Access Method) store with ACID transactions.
 
 This project is a **validation exercise**: prove that the ISAM library behaves correctly under the access patterns a production graph database would require, before committing to it in a larger project.
