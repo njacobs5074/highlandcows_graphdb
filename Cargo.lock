@@ -93,9 +93,9 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "highlandcows-isam"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e240d104368f034b225e72f60101aa23bb7d2cafddbdb201766f8f7fbc414ada"
+checksum = "6729f846a31abffbcb09f81c9772b5d70c0611991fbfab690d972efb034ceeb1"
 dependencies = [
  "bincode",
  "serde",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "highlandcows_graphdb"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "highlandcows-isam",
  "serde",

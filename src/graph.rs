@@ -10,7 +10,7 @@ use crate::types::{
     EDGES_DB, EDGES_DB_FILE, LABEL_INDEX_DB, LABEL_INDEX_DB_FILE, MAX_LABEL_VALUE, NODES_DB,
     NODES_DB_FILE, NodeRecord,
 };
-use highlandcows_isam::{Isam, IsamError, IsamResult, Transaction};
+use highlandcows_isam::{Isam, IsamError, IsamResult};
 use std::{
     collections::{HashSet, VecDeque},
     path::Path,
@@ -65,10 +65,8 @@ impl GraphDb {
     /// Inserts a new node and materializes edges to all nodes that share at
     /// least one label with it.
     pub fn add_node(&mut self, key: String, record: NodeRecord) -> IsamResult<()> {
-        let mut txn = self.nodes.begin_transaction()?;
-        self.nodes.insert(&mut txn, key.clone(), &record)?;
-        txn.commit()?;
-
+        let nodes = &self.nodes;
+        nodes.write(|txn| nodes.insert(txn, key.clone(), &record))?;
         self.add_labels(&key, &record.labels)
     }
 
@@ -86,23 +84,15 @@ impl GraphDb {
     pub fn delete_node(&mut self, key: &str) -> IsamResult<()> {
         // Get the node's labels before deleting it. We'll need these later.
         let record = {
-            let mut txn = self.nodes.begin_transaction()?;
-            let record = self
-                .nodes
-                .get(&mut txn, &key.to_string())?
-                .ok_or(IsamError::KeyNotFound)?;
-            txn.commit()?;
-            record
+            let nodes = &self.nodes;
+            nodes.read(|txn| nodes.get(txn, &key.to_string())?.ok_or(IsamError::KeyNotFound))?
         };
 
-        // Delete from the node store
-        let mut txn = self.nodes.begin_transaction()?;
-        self.nodes.delete(&mut txn, &key.to_string())?;
-        txn.commit()?;
+        // Delete from the node store first — see ordering invariant above.
+        let nodes = &self.nodes;
+        nodes.write(|txn| nodes.delete(txn, &key.to_string()))?;
 
-        self.remove_labels(key, &record.labels)?;
-
-        Ok(())
+        self.remove_labels(key, &record.labels)
     }
 
     /// Returns the keys of all nodes directly connected to `key`.
@@ -113,18 +103,14 @@ impl GraphDb {
     pub fn get_node_neighbors(&self, key: &str) -> IsamResult<Vec<String>> {
         let start = (key.to_string(), String::new());
         let end = (key.to_string(), String::from(MAX_LABEL_VALUE));
-
-        let mut txn = self.edges.begin_transaction()?;
-        let neighbors = self
-            .edges
-            .range(&mut txn, start..=end)?
-            .filter_map(|r| r.ok())
-            .map(|(k, _)| k.1)
-            .collect();
-
-        txn.commit()?;
-
-        Ok(neighbors)
+        let edges = &self.edges;
+        edges.read(|txn| {
+            Ok(edges
+                .range(txn, start..=end)?
+                .filter_map(|r| r.ok())
+                .map(|(k, _)| k.1)
+                .collect())
+        })
     }
 
     /// Replaces the record for an existing node and reconciles edges.
@@ -143,16 +129,10 @@ impl GraphDb {
     /// and new sets are not incorrectly removed.
     pub fn update_node(&mut self, key: &str, record: NodeRecord) -> IsamResult<()> {
         let old_record = {
-            let mut txn = self.nodes.begin_transaction()?;
-            let old_record = self
-                .nodes
-                .get(&mut txn, &key.to_string())?
-                .ok_or(IsamError::KeyNotFound)?;
-            txn.commit()?;
-            old_record
+            let nodes = &self.nodes;
+            nodes.read(|txn| nodes.get(txn, &key.to_string())?.ok_or(IsamError::KeyNotFound))?
         };
 
-        use std::collections::HashSet;
         let old_labels: HashSet<&String> = old_record.labels.iter().collect();
         let new_labels: HashSet<&String> = record.labels.iter().collect();
 
@@ -166,15 +146,12 @@ impl GraphDb {
             .map(|s| s.to_string())
             .collect();
 
-        let mut txn = self.nodes.begin_transaction()?;
-        self.nodes.update(&mut txn, key.to_string(), &record)?;
-        txn.commit()?;
+        // Write new record first — see ordering invariant above.
+        let nodes = &self.nodes;
+        nodes.write(|txn| nodes.update(txn, key.to_string(), &record))?;
 
         self.remove_labels(key, &removed_labels)?;
-
-        self.add_labels(key, &added_labels)?;
-
-        Ok(())
+        self.add_labels(key, &added_labels)
     }
 
     /// Returns `true` if `end` is reachable from `start` by traversing
@@ -182,16 +159,14 @@ impl GraphDb {
     ///
     /// Returns [`IsamError::KeyNotFound`] if either `start` or `end` does not
     /// exist in the database.
-    pub fn is_reachable(&mut self, start: &str, end: &str) -> IsamResult<bool> {
+    pub fn is_reachable(&self, start: &str, end: &str) -> IsamResult<bool> {
         {
-            let mut txn = self.nodes.begin_transaction()?;
-            self.nodes
-                .get(&mut txn, &start.to_string())?
-                .ok_or(IsamError::KeyNotFound)?;
-            self.nodes
-                .get(&mut txn, &end.to_string())?
-                .ok_or(IsamError::KeyNotFound)?;
-            txn.commit()?;
+            let nodes = &self.nodes;
+            nodes.read(|txn| {
+                nodes.get(txn, &start.to_string())?.ok_or(IsamError::KeyNotFound)?;
+                nodes.get(txn, &end.to_string())?.ok_or(IsamError::KeyNotFound)?;
+                Ok(())
+            })?;
         }
 
         if start == end {
@@ -230,97 +205,84 @@ impl GraphDb {
             && path.join(EDGES_DB_FILE).exists()
     }
 
-    fn edges_insert(
-        &self,
-        txn: &mut Transaction<'_, (String, String), ()>,
-        from: String,
-        to: String,
-    ) -> IsamResult<()> {
-        match self.edges.insert(txn, (from, to), &()) {
-            Ok(_) | Err(IsamError::DuplicateKey) => Ok(()),
-            Err(e) => Err(e),
-        }
-    }
-
-    fn edges_delete(
-        &self,
-        txn: &mut Transaction<'_, (String, String), ()>,
-        from: String,
-        to: String,
-    ) -> IsamResult<()> {
-        match self.edges.delete(txn, &(from, to)) {
-            Ok(_) | Err(IsamError::KeyNotFound) => Ok(()),
+    fn ignore_if<T>(result: IsamResult<T>, is_ignorable: impl Fn(&IsamError) -> bool) -> IsamResult<()> {
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) if is_ignorable(&e) => Ok(()),
             Err(e) => Err(e),
         }
     }
 
     fn add_labels(&mut self, key: &str, labels: &[String]) -> IsamResult<()> {
-        let mut txn = self.label_index.begin_transaction()?;
-        for label in labels {
-            self.label_index
-                .insert(&mut txn, (label.clone(), key.to_string()), &())?;
-        }
-        txn.commit()?;
+        let label_index = &self.label_index;
+        label_index.write(|txn| {
+            for label in labels {
+                label_index.insert(txn, (label.clone(), key.to_string()), &())?;
+            }
+            Ok(())
+        })?;
 
-        // Step 3 & 4: For each label, find co-members, and materialize edges
         for label in labels {
             let co_members: Vec<String> = {
-                let mut txn = self.label_index.begin_transaction()?;
+                let label_index = &self.label_index;
                 let start = (label.clone(), String::new());
                 let end = (label.clone(), String::from(MAX_LABEL_VALUE));
-                let results = self
-                    .label_index
-                    .range(&mut txn, start..=end)?
-                    .filter_map(|r| r.ok())
-                    .map(|(k, _)| k.1)
-                    .filter(|k| *k != key)
-                    .collect();
-                txn.commit()?;
-
-                results
+                label_index.read(|txn| {
+                    Ok(label_index
+                        .range(txn, start..=end)?
+                        .filter_map(|r| r.ok())
+                        .map(|(k, _)| k.1)
+                        .filter(|k| *k != key)
+                        .collect())
+                })?
             };
 
-            let mut txn = self.edges.begin_transaction()?;
-            for co_member in co_members {
-                // Insert edge in both directions, ignoring duplicates
-                self.edges_insert(&mut txn, key.to_string(), co_member.clone())?;
-                self.edges_insert(&mut txn, co_member.clone(), key.to_string())?;
-            }
-            txn.commit()?
+            let edges = &self.edges;
+            edges.write(|txn| {
+                for co_member in &co_members {
+                    // Insert edges in both directions, ignoring duplicates
+                    Self::ignore_if(
+                        edges.insert(txn, (key.to_string(), co_member.clone()), &()),
+                        |e| matches!(e, IsamError::DuplicateKey),
+                    )?;
+                    Self::ignore_if(
+                        edges.insert(txn, (co_member.clone(), key.to_string()), &()),
+                        |e| matches!(e, IsamError::DuplicateKey),
+                    )?;
+                }
+                Ok(())
+            })?;
         }
 
         Ok(())
     }
 
     fn remove_labels(&mut self, key: &str, labels: &[String]) -> IsamResult<()> {
-        // Delete (label, key) frm label index for each label
-        let mut txn = self.label_index.begin_transaction()?;
-        for label in labels {
-            self.label_index
-                .delete(&mut txn, &(label.clone(), key.to_string()))?;
-        }
-        txn.commit()?;
+        let label_index = &self.label_index;
+        label_index.write(|txn| {
+            for label in labels {
+                label_index.delete(txn, &(label.clone(), key.to_string()))?;
+            }
+            Ok(())
+        })?;
 
-        // For each label, find co-memebers and delete edges in both directions
         for label in labels {
             let co_members: Vec<String> = {
-                let mut txn = self.label_index.begin_transaction()?;
+                let label_index = &self.label_index;
                 let start = (label.clone(), String::new());
                 let end = (label.clone(), MAX_LABEL_VALUE.to_string());
-                let results = self
-                    .label_index
-                    .range(&mut txn, start..=end)?
-                    .filter_map(|r| r.ok())
-                    .map(|(k, _)| k.1)
-                    .filter(|k| k != key)
-                    .collect();
-                txn.commit()?;
-
-                results
+                label_index.read(|txn| {
+                    Ok(label_index
+                        .range(txn, start..=end)?
+                        .filter_map(|r| r.ok())
+                        .map(|(k, _)| k.1)
+                        .filter(|k| k.as_str() != key)
+                        .collect())
+                })?
             };
 
             for co_member in co_members {
-                self.remove_edge_if_unconnected(key, &co_member)?
+                self.remove_edge_if_unconnected(key, &co_member)?;
             }
         }
 
@@ -328,36 +290,39 @@ impl GraphDb {
     }
 
     fn remove_edge_if_unconnected(&mut self, key: &str, co_member: &str) -> IsamResult<()> {
-        if !self.shares_any_label(key, co_member)? {
-            let mut txn = self.edges.begin_transaction()?;
-            self.edges_delete(&mut txn, key.to_string(), co_member.to_string())?;
-            self.edges_delete(&mut txn, co_member.to_string(), key.to_string())?;
-            txn.commit()?;
+        if self.shares_any_label(key, co_member)? {
+            Ok(())
+        } else {
+            let edges = &self.edges;
+            edges.write(|txn| {
+                // Delete edges in both directions, ignoring missing keys
+                Self::ignore_if(
+                    edges.delete(txn, &(key.to_string(), co_member.to_string())),
+                    |e| matches!(e, IsamError::KeyNotFound),
+                )?;
+                Self::ignore_if(
+                    edges.delete(txn, &(co_member.to_string(), key.to_string())),
+                    |e| matches!(e, IsamError::KeyNotFound),
+                )?;
+                Ok(())
+            })
         }
-        Ok(())
     }
 
-    fn shares_any_label(&mut self, key: &str, other: &str) -> IsamResult<bool> {
-        let key_record = {
-            let mut txn = self.nodes.begin_transaction()?;
-            let Some(record) = self.nodes.get(&mut txn, &key.to_string())? else {
-                return Ok(false);
-            };
-            txn.commit()?;
-            record
-        };
-
-        let other_record = {
-            let mut txn = self.nodes.begin_transaction()?;
-            let record = self
-                .nodes
-                .get(&mut txn, &other.to_string())?
+    fn shares_any_label(&self, key: &str, other: &str) -> IsamResult<bool> {
+        let nodes = &self.nodes;
+        let (key_record, other_record) = nodes.read(|txn| {
+            let key_opt = nodes.get(txn, &key.to_string())?;
+            let other = nodes
+                .get(txn, &other.to_string())?
                 .ok_or(IsamError::KeyNotFound)?;
-            txn.commit()?;
-            record
+            Ok((key_opt, other))
+        })?;
+
+        let Some(key_record) = key_record else {
+            return Ok(false);
         };
 
-        use std::collections::HashSet;
         let key_labels: HashSet<&String> = key_record.labels.iter().collect();
         let other_labels: HashSet<&String> = other_record.labels.iter().collect();
 
