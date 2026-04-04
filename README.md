@@ -26,6 +26,7 @@ Three ISAM files are kept in sync for every mutation:
 // Lifecycle
 GraphDb::create(path: &Path) -> IsamResult<Self>
 GraphDb::open(path: &Path)   -> IsamResult<Self>
+GraphDb::exists(path: &Path) -> bool
 
 // Operations
 fn add_node(&mut self, key: String, record: NodeRecord) -> IsamResult<()>
