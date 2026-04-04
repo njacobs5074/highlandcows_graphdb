@@ -29,7 +29,7 @@ impl GraphDb {
     /// Returns [`IsamError::Io`] with `AlreadyExists` if the database files
     /// are already present at that location.
     pub fn create(path: &Path) -> IsamResult<Self> {
-        if GraphDb::db_exists(path) {
+        if GraphDb::exists(path) {
             return Err(IsamError::Io(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 "Graph database already exists",
@@ -48,7 +48,7 @@ impl GraphDb {
     /// Returns [`IsamError::Io`] with `NotFound` if the expected database
     /// files are absent.
     pub fn open(path: &Path) -> IsamResult<Self> {
-        if !GraphDb::db_exists(path) {
+        if !GraphDb::exists(path) {
             return Err(IsamError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "Graph database files not found",
@@ -60,6 +60,14 @@ impl GraphDb {
             label_index: Isam::open(path.join(LABEL_INDEX_DB))?,
             edges: Isam::open(path.join(EDGES_DB))?,
         })
+    }
+
+    /// Returns true if there is a graph database at `path` and the caller has
+    /// access to it and false otherwise.
+    pub fn exists(path: &Path) -> bool {
+        path.join(NODES_DB_FILE).exists()
+            && path.join(LABEL_INDEX_DB_FILE).exists()
+            && path.join(EDGES_DB_FILE).exists()
     }
 
     /// Inserts a new node and materializes edges to all nodes that share at
@@ -85,7 +93,11 @@ impl GraphDb {
         // Get the node's labels before deleting it. We'll need these later.
         let record = {
             let nodes = &self.nodes;
-            nodes.read(|txn| nodes.get(txn, &key.to_string())?.ok_or(IsamError::KeyNotFound))?
+            nodes.read(|txn| {
+                nodes
+                    .get(txn, &key.to_string())?
+                    .ok_or(IsamError::KeyNotFound)
+            })?
         };
 
         // Delete from the node store first — see ordering invariant above.
@@ -130,7 +142,11 @@ impl GraphDb {
     pub fn update_node(&mut self, key: &str, record: NodeRecord) -> IsamResult<()> {
         let old_record = {
             let nodes = &self.nodes;
-            nodes.read(|txn| nodes.get(txn, &key.to_string())?.ok_or(IsamError::KeyNotFound))?
+            nodes.read(|txn| {
+                nodes
+                    .get(txn, &key.to_string())?
+                    .ok_or(IsamError::KeyNotFound)
+            })?
         };
 
         let old_labels: HashSet<&String> = old_record.labels.iter().collect();
@@ -163,8 +179,12 @@ impl GraphDb {
         {
             let nodes = &self.nodes;
             nodes.read(|txn| {
-                nodes.get(txn, &start.to_string())?.ok_or(IsamError::KeyNotFound)?;
-                nodes.get(txn, &end.to_string())?.ok_or(IsamError::KeyNotFound)?;
+                nodes
+                    .get(txn, &start.to_string())?
+                    .ok_or(IsamError::KeyNotFound)?;
+                nodes
+                    .get(txn, &end.to_string())?
+                    .ok_or(IsamError::KeyNotFound)?;
                 Ok(())
             })?;
         }
@@ -199,13 +219,10 @@ impl GraphDb {
 
 // Private methods
 impl GraphDb {
-    fn db_exists(path: &Path) -> bool {
-        path.join(NODES_DB_FILE).exists()
-            && path.join(LABEL_INDEX_DB_FILE).exists()
-            && path.join(EDGES_DB_FILE).exists()
-    }
-
-    fn ignore_if<T>(result: IsamResult<T>, is_ignorable: impl Fn(&IsamError) -> bool) -> IsamResult<()> {
+    fn ignore_if<T>(
+        result: IsamResult<T>,
+        is_ignorable: impl Fn(&IsamError) -> bool,
+    ) -> IsamResult<()> {
         match result {
             Ok(_) => Ok(()),
             Err(e) if is_ignorable(&e) => Ok(()),
