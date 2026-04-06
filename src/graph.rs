@@ -37,9 +37,9 @@ impl GraphDb {
         }
 
         Ok(Self {
-            nodes: Isam::create(path.join(NODES_DB))?,
-            label_index: Isam::create(path.join(LABEL_INDEX_DB))?,
-            edges: Isam::create(path.join(EDGES_DB))?,
+            nodes: Isam::builder().create(path.join(NODES_DB))?,
+            label_index: Isam::builder().create(path.join(LABEL_INDEX_DB))?,
+            edges: Isam::builder().create(path.join(EDGES_DB))?,
         })
     }
 
@@ -56,9 +56,9 @@ impl GraphDb {
         }
 
         Ok(Self {
-            nodes: Isam::open(path.join(NODES_DB))?,
-            label_index: Isam::open(path.join(LABEL_INDEX_DB))?,
-            edges: Isam::open(path.join(EDGES_DB))?,
+            nodes: Isam::builder().open(path.join(NODES_DB))?,
+            label_index: Isam::builder().open(path.join(LABEL_INDEX_DB))?,
+            edges: Isam::builder().open(path.join(EDGES_DB))?,
         })
     }
 
