@@ -33,7 +33,7 @@ fn add_node(&mut self, key: String, record: NodeRecord) -> IsamResult<()>
 fn delete_node(&mut self, key: &str) -> IsamResult<()>
 fn update_node(&mut self, key: &str, record: NodeRecord) -> IsamResult<()>
 fn get_node_neighbors(&self, key: &str) -> IsamResult<Vec<String>>
-fn is_reachable(&mut self, start: &str, end: &str) -> IsamResult<bool>
+fn is_reachable(&self, start: &str, end: &str) -> IsamResult<bool>
 ```
 
 Nodes are keyed by a unique string. `IsamError::DuplicateKey` is returned on duplicate inserts. `IsamError::KeyNotFound` is returned when operating on a node that does not exist.
